@@ -24,47 +24,69 @@ impl<'a> Message<'a> {
     }
 }
 
-fn send_message(address: &str, message: Message) -> std::io::Result<()> {
-    let mut stream = TcpStream::connect(address).expect("Could not connect to address");
-    let mut buf: Vec<u8> = Vec::new();
-    buf.write_all(serde_json::to_string(&message).unwrap().as_bytes())?;
-    stream.write_all(&buf).expect("Could not write to buffer");
-    Ok(())
-}
-
-fn listen_server() {
-    println!("Listening for server responses");
-    let address = "127.0.0.1:12345";
-    let mut stream = TcpStream::connect(address).expect("Could not connect to address");
+// Function to run in a separate thread: listens for incoming messages
+fn listen_to_server(mut stream: TcpStream) {
+    let mut buf = [0; 2048];
     loop {
-        let mut buf: [u8; 2048] = [0; 2048];
-        let dec_stream = stream.read(&mut buf).expect("Could not read stream");
-        println!("{:?}", &buf[..dec_stream]);
+        match stream.read(&mut buf) {
+            Ok(n) => {
+                if n == 0 {
+                    println!("Server closed connection.");
+                    break;
+                }
+                // Convert bytes to string and print
+                // In a real app, you might deserialize the Message struct here
+                let response = String::from_utf8_lossy(&buf[..n]);
+                println!("\n[Server]: {}", response);
+                print!("Message: "); // Re-prompt for UI consistency
+                io::stdout().flush().unwrap();
+            }
+            Err(_) => break,
+        }
     }
 }
 
 fn main() -> std::io::Result<()> {
-    //Construct all the variables to be used for input
     let addr = "127.0.0.1:12345";
     let mut usr = String::new();
 
     io::stdout().write_all(b"Enter Username: ")?;
     io::stdout().flush()?;
     io::stdin().read_line(&mut usr).unwrap();
-    //First We tell the server a user has joined
-    //So we construct a new message to do this
-    //TODO get a better way of doing this
-    thread::spawn(listen_server);
+    let usr = usr.trim().to_string(); // Own the string
+
+    // 1. Connect ONCE
+    let mut stream = TcpStream::connect(addr).expect("Could not connect to address");
+
+    // 2. Clone the stream for the listening thread
+    let stream_clone = stream.try_clone().expect("Could not clone stream");
+
+    // 3. Spawn the listener thread
+    thread::spawn(move || {
+        listen_to_server(stream_clone);
+    });
+
+    // 4. Main loop sends messages using the original stream
     loop {
         let mut mes = String::new();
+        // Note: The listener thread might print over this prompt, dealing with that
+        // usually requires a TUI library like 'ratatui' hint hint
+        // For now, simple console I/O:
         io::stdout().write_all(b"Message: ")?;
         io::stdout().flush()?;
+
         io::stdin().read_line(&mut mes).unwrap();
-        if mes.trim() == "quit" {
+        let mes = mes.trim();
+        if mes == "quit" {
             break;
         }
-        let message = Message::new(&usr, 0, &mes, mes.len());
-        send_message(addr, message)?;
+
+        let message = Message::new(&usr, 0, mes, mes.len());
+
+        // Write directly to the persistent stream
+        let serialized = serde_json::to_string(&message).unwrap();
+        stream.write_all(serialized.as_bytes())?;
+        stream.flush()?;
     }
     Ok(())
 }
