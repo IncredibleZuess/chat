@@ -1,8 +1,9 @@
 use std::io::prelude::*;
 use std::net::{TcpListener, TcpStream};
+use std::thread;
 
 use serde::{Deserialize, Serialize};
-#[derive(Serialize,Deserialize,Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 struct Message {
     by: String,
     message_type: u8,
@@ -10,29 +11,42 @@ struct Message {
     message_length: u8,
 }
 
-fn handle_client(mut stream: TcpStream){
+fn handle_client(mut stream: TcpStream) {
     //Start with a large buffer size that can handle wierd messages TODO actually test this
     let mut buf: [u8; 2048] = [0; 2048];
     //First get the size of the incoming message
-    let dec_mes = stream.read(&mut buf).unwrap();
+    let dec_mes = stream.read(&mut buf);
+
+    //println!("Stream contents: {:#?}", buf);
     //Then use this size to set the amount of the buffer to read
-    let mes: Message = serde_json::from_str(str::from_utf8(&buf[..dec_mes]).unwrap()).unwrap();
+    let mes: Message =
+        serde_json::from_str(str::from_utf8(&buf[..dec_mes.unwrap()]).unwrap().trim())
+            .expect("Could not decode messsage");
     //Note Debug print
-    println!("Message Content: {:?}", mes);
+    println!("{:}: {:}", mes.by.trim(), mes.message.trim());
+    stream.write_all(&buf).expect("Could not write to stream");
 }
 
 fn main() -> std::io::Result<()> {
     let addr = "127.0.0.1:12345";
 
-    let listener: std::io::Result<TcpListener> = match TcpListener::bind(addr){
-        Ok(listener) => {println!("Server is running on {:?}", addr); Ok(listener)},
-        Err(e) =>{ eprintln!("An error has occured: {}", e); Err(e)},
+    let listener: std::io::Result<TcpListener> = match TcpListener::bind(addr) {
+        Ok(listener) => {
+            println!("Server is running on {:?}", addr);
+            Ok(listener)
+        }
+        Err(e) => {
+            eprintln!("An error has occured: {}", e);
+            Err(e)
+        }
     };
-    
 
-    for stream in listener?.incoming(){
-        handle_client(stream?);
+    for stream in listener?.incoming() {
+        println!("Handling client");
+        thread::spawn(|| {
+            handle_client(stream.unwrap());
+        });
     }
     Ok(())
-
 }
+
